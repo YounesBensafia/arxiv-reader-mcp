@@ -1,6 +1,4 @@
-def main():
-    print("Hello from arxiv-mcp-server!")
+from server import server
 
+server.run()
 
-if __name__ == "__main__":
-    main()
