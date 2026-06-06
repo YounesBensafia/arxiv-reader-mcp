@@ -1,3 +1,6 @@
+from io import BytesIO
+import httpx
+from pdfminer.high_level import extract_text
 from mcp.server.fastmcp import FastMCP
 from arxiv_api import search, get_by_id, get_recent, ArxivError
 
@@ -62,7 +65,7 @@ def get_paper(arxiv_id: str) -> str:
 
 
 @server.tool(description="Get the most recent papers in a given category (e.g. cs.AI, quant-ph)")
-def get_recent_papers(category: str, max_results: int = 10) -> str:
+def get_recent(category: str, max_results: int = 10) -> str:
     try:
         results = get_recent(category, max_results=max_results)
     except ArxivError as e:
@@ -79,6 +82,62 @@ def get_recent_papers(category: str, max_results: int = 10) -> str:
             lines.append(f"   PDF: {r['pdf_url']}")
         lines.append("")
     return "\n".join(lines)
+
+
+@server.tool(description="Search papers by query, category, and optional date")
+def search_papers(
+    query: str,
+    category: str | None = None,
+    max_results: int = 10,
+    date_from: str | None = None,
+) -> str:
+    try:
+        results = search(
+            keyword=query,
+            category=category,
+            max_results=max_results,
+            date_from=date_from,
+        )
+    except ArxivError as e:
+        return f"Error: {e}"
+    if not results:
+        return "No results found."
+    lines = []
+    for i, r in enumerate(results, 1):
+        lines.append(f"{i}. {r['title']}")
+        lines.append(f"   ID: {r['id'].removeprefix('http://arxiv.org/abs/')}")
+        lines.append(f"   Authors: {', '.join(r['authors'])}")
+        lines.append(f"   Published: {r['published']}")
+        if r["pdf_url"]:
+            lines.append(f"   PDF: {r['pdf_url']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+@server.tool(description="Download PDF and extract text for a given arXiv ID")
+def fetch_pdf(arxiv_id: str) -> str:
+    try:
+        paper = get_by_id(arxiv_id)
+    except ArxivError as e:
+        return f"Error: {e}"
+    if not paper:
+        return f"No paper found with ID {arxiv_id}."
+    if not paper["pdf_url"]:
+        return f"No PDF available for {arxiv_id}."
+    try:
+        response = httpx.get(paper["pdf_url"], timeout=60, follow_redirects=True)
+        response.raise_for_status()
+    except httpx.TimeoutException:
+        return "Error: PDF download timed out"
+    except httpx.ConnectError:
+        return "Error: Could not connect to download PDF"
+    except httpx.HTTPStatusError as e:
+        return f"Error: HTTP {e.response.status_code} downloading PDF"
+    try:
+        text = extract_text(BytesIO(response.content))
+    except Exception as e:
+        return f"Error extracting text from PDF: {e}"
+    return text.strip() or "No text could be extracted from the PDF."
 
 
 if __name__ == "__main__":
